@@ -5,9 +5,14 @@ library(patchwork)
 library(RMediation)
 library(TwoSampleMR)
 
+# set token (update every 2 weeks)
+my_token <- "......"
+Sys.setenv(OPENGWAS_JWT = my_token)
+
 # glioma data
 glioma_melin_2017_new <- data.table::fread("glioma_melin_2017_new.tsv.gz")
 glioma_melin_2017_new$phenotype <- "glioma"
+glioma_melin_2017_new <- as.data.frame(glioma_melin_2017_new)
 gli_exp <- format_data(dat = glioma_melin_2017_new[glioma_melin_2017_new$P < 5e-05, ], 
                        type = "exposure", 
                        phenotype_col = "phenotype", 
@@ -24,6 +29,7 @@ gli_exp <- format_data(dat = glioma_melin_2017_new[glioma_melin_2017_new$P < 5e-
 # GBM data
 gbm_melin_2017_new <- data.table::fread("gbm_melin_2017_new.tsv.gz")
 gbm_melin_2017_new$phenotype <- "GBM"
+gbm_melin_2017_new <- as.data.frame(gbm_melin_2017_new)
 gbm_exp <- format_data(dat = gbm_melin_2017_new[gbm_melin_2017_new$P < 5e-05, ], 
                        type = "exposure", 
                        phenotype_col = "phenotype", 
@@ -40,6 +46,7 @@ gbm_exp <- format_data(dat = gbm_melin_2017_new[gbm_melin_2017_new$P < 5e-05, ],
 # non-GBM glioma data
 non_gbm_melin_2017_new <- data.table::fread("non_gbm_melin_2017_new.tsv.gz")
 non_gbm_melin_2017_new$phenotype <- "non-GBM glioma"
+non_gbm_melin_2017_new <- as.data.frame(non_gbm_melin_2017_new)
 non_gbm_exp <- format_data(dat = non_gbm_melin_2017_new[non_gbm_melin_2017_new$P < 5e-05, ], 
                            type = "exposure", 
                            phenotype_col = "phenotype", 
@@ -82,7 +89,7 @@ mr_pri_ana <- function(exp, out, exp_sample_size) {
   exp <- exp[exp$F >= 10, ]
   
   # outcome
-  out <- format_data(dat = out, 
+  out <- format_data(dat = as.data.frame(out), 
                      type = "outcome", 
                      snps = exp$SNP, 
                      phenotype_col = "phenotype", 
@@ -259,14 +266,14 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
       {
         withCallingHandlers(
           {
-            exp <- clump_data(dat = exp, 
-                              clump_kb = 1000, 
+            exp <- clump_data(dat = exp,
+                              clump_kb = 1000,
                               clump_r2 = 0.1)
             break
-          }, 
+          },
           message = function(m){if(grepl("Server error", m$message)){stop()}}
         )
-      }, 
+      },
       error = function(e){message("Retry")}
     )
   }
@@ -274,7 +281,7 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
   exp$R2 <- exp$beta.exposure ^ 2 / (exp$beta.exposure ^ 2 + exp$samplesize.exposure * exp$se.exposure ^ 2)
   exp$F <- (exp$samplesize.exposure - 2) * exp$R2 / (1 - exp$R2)
   exp <- exp[exp$F >= 10, ]
-  
+
   med_sig_exp <- c()
   exp_med_b <- c()
   exp_med_list <- list()
@@ -282,33 +289,32 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
     repeat {
       tryCatch({
         withCallingHandlers({
-          med_out <- extract_outcome_data(snps = exp$SNP, 
-                                          outcomes = paste("ebi-a-GCST9000", i, sep = ""), 
-                                          access_token = NULL)
+          med_out <- extract_outcome_data(snps = exp$SNP,
+                                          outcomes = paste("ebi-a-GCST9000", i, sep = ""))
           break
-        }, 
+        },
         message = function(m){if(grepl("Server error", m$message)){stop()}}
         )
-      }, 
+      },
       error = function(e){message("Retry")}
       )
     }
     try({
-      exp_med <- harmonise_data(exposure_dat = exp, 
-                                outcome_dat = med_out, 
+      exp_med <- harmonise_data(exposure_dat = exp,
+                                outcome_dat = med_out,
                                 action = 2)
       exp_med <- exp_med[exp_med$pval.outcome >= 5e-05, ]
-      
+
       exp_med_cd <- cooks.distance(lm(formula = beta.outcome ~ beta.exposure + 0, data = exp_med[exp_med$mr_keep == TRUE, ], weights = se.outcome ^ (-2)))
       exp_med_cd_large <- as.numeric(names(which(exp_med_cd > 4 / nrow(exp_med[exp_med$mr_keep == TRUE, ]))))
       exp_med_sr <- rstudent(lm(formula = beta.outcome ~ beta.exposure + 0, data = exp_med[exp_med$mr_keep == TRUE, ], weights = se.outcome ^ (-2)))
       exp_med_sr_large <- as.numeric(names(which(abs(exp_med_sr) > 2)))
       exp_med <- exp_med[-c(exp_med_cd_large, exp_med_sr_large), ]
       rownames(exp_med) <- 1 : nrow(exp_med)
-      
+
       mr_res_exp_med <- mr(exp_med, method_list = "mr_ivw")
       mr_res_or_exp_med <- generate_odds_ratios(mr_res_exp_med)
-      
+
       if(mr_res_or_exp_med$pval < 0.05) {
         med_sig_exp <- c(med_sig_exp, mr_res_or_exp_med$id.outcome)
         exp_med_b <- c(exp_med_b, mr_res_or_exp_med$b)
@@ -316,7 +322,7 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
       }
     })
   }
-  
+
   med_sig_exp_out <- c()
   mr_res_or_exp_med_list <- list()
   mr_res_or_med_out_list <- list()
@@ -328,18 +334,13 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
     repeat {
       tryCatch({
         withCallingHandlers({
-          med_exp <- extract_instruments(outcomes = j, 
-                                         p1 = 5e-05, 
-                                         clump = TRUE, 
-                                         p2 = 5e-05, 
-                                         r2 = 0.1, 
-                                         kb = 1000, 
-                                         access_token = NULL)
+          med_exp <- extract_instruments(outcomes = j, p1 = 5e-05, clump = FALSE)
+          med_exp <- clump_data(med_exp, clump_kb = 1000, clump_r2 = 0.1, clump_p2 = 5e-05)
           break
-        }, 
+        },
         message = function(m){if(grepl("Server error", m$message)){stop()}}
         )
-      }, 
+      },
       error = function(e){message("Retry")}
       )
     }
@@ -347,56 +348,56 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
       med_exp$R2 <- med_exp$beta.exposure ^ 2 / (med_exp$beta.exposure ^ 2 + med_exp$samplesize.exposure * med_exp$se.exposure ^ 2)
       med_exp$F <- (med_exp$samplesize.exposure - 2) * med_exp$R2 / (1 - med_exp$R2)
       med_exp <- med_exp[med_exp$F >= 10, ]
-      out_out <- format_data(dat = out, 
-                             type = "outcome", 
-                             snps = med_exp$SNP, 
-                             phenotype_col = "phenotype", 
-                             snp_col = "SNP", 
-                             beta_col = "BETA", 
-                             se_col = "SE", 
-                             eaf_col = "FRQ", 
-                             effect_allele_col = "A2", 
-                             other_allele_col = "A1", 
-                             pval_col = "P", 
-                             samplesize_col = "N", 
-                             chr_col = "CHR", 
+      out_out <- format_data(dat = as.data.frame(out),
+                             type = "outcome",
+                             snps = med_exp$SNP,
+                             phenotype_col = "phenotype",
+                             snp_col = "SNP",
+                             beta_col = "BETA",
+                             se_col = "SE",
+                             eaf_col = "FRQ",
+                             effect_allele_col = "A2",
+                             other_allele_col = "A1",
+                             pval_col = "P",
+                             samplesize_col = "N",
+                             chr_col = "CHR",
                              pos_col = "BP")
-      med_out <- harmonise_data(exposure_dat = med_exp, 
-                                outcome_dat = out_out, 
+      med_out <- harmonise_data(exposure_dat = med_exp,
+                                outcome_dat = out_out,
                                 action = 2)
       med_out <- med_out[med_out$pval.outcome >= 5e-05, ]
-      
+
       med_out_cd <- cooks.distance(lm(formula = beta.outcome ~ beta.exposure + 0, data = med_out[med_out$mr_keep == TRUE, ], weights = se.outcome ^ (-2)))
       med_out_cd_large <- as.numeric(names(which(med_out_cd > 4 / nrow(med_out[med_out$mr_keep == TRUE, ]))))
       med_out_sr <- rstudent(lm(formula = beta.outcome ~ beta.exposure + 0, data = med_out[med_out$mr_keep == TRUE, ], weights = se.outcome ^ (-2)))
       med_out_sr_large <- as.numeric(names(which(abs(med_out_sr) > 2)))
       med_out <- med_out[-c(med_out_cd_large, med_out_sr_large), ]
       rownames(med_out) <- 1 : nrow(med_out)
-      
-      method_list <- c("mr_egger_regression", 
-                       "mr_simple_median", 
-                       "mr_weighted_median", 
-                       "mr_ivw", 
-                       "mr_simple_mode", 
+
+      method_list <- c("mr_egger_regression",
+                       "mr_simple_median",
+                       "mr_weighted_median",
+                       "mr_ivw",
+                       "mr_simple_mode",
                        "mr_weighted_mode")
       mr_res_med_out <- mr(med_out, method_list = method_list)
       mr_res_or_med_out <- generate_odds_ratios(mr_res_med_out)
-      
+
       if(mr_res_or_med_out$pval[mr_res_or_med_out$method == "Inverse variance weighted"] < 0.05 & exp_med_b[med_sig_exp == j] * mr_res_or_med_out$b[mr_res_or_med_out$method == "Inverse variance weighted"] / mr_res_or_exp_out$b[mr_res_or_exp_out$method == "Inverse variance weighted"] > 0) {
         med_sig_exp_out <- c(med_sig_exp_out, j)
         mr_res_exp_med <- mr(exp_med_list[[which(med_sig_exp == j)]], method_list = method_list)
         mr_res_or_exp_med <- generate_odds_ratios(mr_res_exp_med)
-        mr_res_sup_exp_med <- mr_sup_ana(exp_out = exp_med_list[[which(med_sig_exp == j)]], 
-                                         exp_name = unique(mr_res_or_exp_med$exposure), 
-                                         out_name = strsplit(unique(mr_res_or_exp_med$outcome), " || ", fixed = TRUE)[[1]][1], 
+        mr_res_sup_exp_med <- mr_sup_ana(exp_out = exp_med_list[[which(med_sig_exp == j)]],
+                                         exp_name = unique(mr_res_or_exp_med$exposure),
+                                         out_name = strsplit(unique(mr_res_or_exp_med$outcome), " || ", fixed = TRUE)[[1]][1],
                                          mr_res_exp_out = mr_res_or_exp_med)
-        mr_res_sup_med_out <- mr_sup_ana(exp_out = med_out, 
-                                         exp_name = strsplit(unique(mr_res_or_exp_med$outcome), " || ", fixed = TRUE)[[1]][1], 
-                                         out_name = unique(mr_res_or_med_out$outcome), 
+        mr_res_sup_med_out <- mr_sup_ana(exp_out = med_out,
+                                         exp_name = strsplit(unique(mr_res_or_exp_med$outcome), " || ", fixed = TRUE)[[1]][1],
+                                         out_name = unique(mr_res_or_med_out$outcome),
                                          mr_res_exp_out = mr_res_or_med_out)
-        med_eff <- medci(mu.x = mr_res_or_exp_med$b[mr_res_or_exp_med$method == "Inverse variance weighted"], 
-                         mu.y = mr_res_or_med_out$b[mr_res_or_med_out$method == "Inverse variance weighted"], 
-                         se.x = mr_res_or_exp_med$se[mr_res_or_exp_med$method == "Inverse variance weighted"], 
+        med_eff <- medci(mu.x = mr_res_or_exp_med$b[mr_res_or_exp_med$method == "Inverse variance weighted"],
+                         mu.y = mr_res_or_med_out$b[mr_res_or_med_out$method == "Inverse variance weighted"],
+                         se.x = mr_res_or_exp_med$se[mr_res_or_exp_med$method == "Inverse variance weighted"],
                          se.y = mr_res_or_med_out$se[mr_res_or_med_out$method == "Inverse variance weighted"])
         med_pro <- sapply(med_eff, function(x){x / mr_res_or_exp_out$b[mr_res_or_exp_out$method == "Inverse variance weighted"]})
         mr_res_or_exp_med_list <- c(mr_res_or_exp_med_list, list(mr_res_or_exp_med))
@@ -408,30 +409,30 @@ med_ana <- function(exp, exp_sample_size, out, mr_res_or_exp_out) {
       }
     })
   }
-  
-  return(list(med_sig_exp = med_sig_exp, 
-              med_sig_exp_out = med_sig_exp_out, 
-              mr_res_or_exp_med_list = mr_res_or_exp_med_list, 
-              mr_res_or_med_out_list = mr_res_or_med_out_list, 
-              mr_res_sup_exp_med_list = mr_res_sup_exp_med_list, 
-              mr_res_sup_med_out_list = mr_res_sup_med_out_list, 
-              med_eff_list = med_eff_list, 
+
+  return(list(med_sig_exp = med_sig_exp,
+              med_sig_exp_out = med_sig_exp_out,
+              mr_res_or_exp_med_list = mr_res_or_exp_med_list,
+              mr_res_or_med_out_list = mr_res_or_med_out_list,
+              mr_res_sup_exp_med_list = mr_res_sup_exp_med_list,
+              mr_res_sup_med_out_list = mr_res_sup_med_out_list,
+              med_eff_list = med_eff_list,
               med_pro_list = med_pro_list))
 }
 
-med_ana_gli_per <- med_ana(exp = gli_exp, 
-                           exp_sample_size = 12496 + 18190, 
-                           out = EUR_perio_excl_HCHSSOL_new, 
+med_ana_gli_per <- med_ana(exp = gli_exp,
+                           exp_sample_size = 12496 + 18190,
+                           out = EUR_perio_excl_HCHSSOL_new,
                            mr_res_or_exp_out = mr_pri_ana_gli_per$mr_res_or_exp_out)
 
-med_ana_gbm_per <- med_ana(exp = gbm_exp, 
-                           exp_sample_size = 6191 + 18190, 
-                           out = EUR_perio_excl_HCHSSOL_new, 
+med_ana_gbm_per <- med_ana(exp = gbm_exp,
+                           exp_sample_size = 6191 + 18190,
+                           out = EUR_perio_excl_HCHSSOL_new,
                            mr_res_or_exp_out = mr_pri_ana_gbm_per$mr_res_or_exp_out)
 
-med_ana_non_gbm_per <- med_ana(exp = non_gbm_exp, 
-                               exp_sample_size = 5819 + 18190, 
-                               out = EUR_perio_excl_HCHSSOL_new, 
+med_ana_non_gbm_per <- med_ana(exp = non_gbm_exp,
+                               exp_sample_size = 5819 + 18190,
+                               out = EUR_perio_excl_HCHSSOL_new,
                                mr_res_or_exp_out = mr_pri_ana_non_gbm_per$mr_res_or_exp_out)
 
 
